@@ -9,11 +9,9 @@ import (
         "github.com/xuri/excelize/v2"
         "encoding/json"
         "strings"
+        "io/ioutil"
         )
 
-type Page struct {
-  Title string
-}
 
 type Subject struct {
   NumberOfSubject string `json:"numberOfSubject"`
@@ -32,6 +30,11 @@ type Weekdays struct {
   Thursday []Subject
   Friday []Subject
   Saturday []Subject
+}
+
+type User struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
 }
 
 func ParseExcelFile(Group string, NumberOfWeek int) {
@@ -187,45 +190,32 @@ func Parse_File_To_Json() {
   }
 
 func index(w http.ResponseWriter, r *http.Request) {
-  p := Page{Title: "Главная"}
   t, err := template.ParseFiles("templates/home_page.html")
   if err != nil {
     fmt.Fprintf(w, err.Error())
   }
 
-  t.Execute(w, p)
+  t.Execute(w, nil)
 }
 
-func users(w http.ResponseWriter, r *http.Request) {
-  p := Page{Title: "Список пользователей"}
-  t, err := template.ParseFiles("templates/home_page.html")
 
-  if err != nil {
-    fmt.Fprintf(w, err.Error())
-  }
-
-  t.Execute(w, p)
-}
 
 func schedule(w http.ResponseWriter, r *http.Request) {
-  p := Page{Title: "Изменить расписание"}
   t, err := template.ParseFiles("templates/schedule.html")
   if err != nil {
     fmt.Fprintf(w, err.Error())
   }
 
-  t.Execute(w, p)
+  t.Execute(w, nil)
 }
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
-	// Parse the multipart form in the request
-	err := r.ParseMultipartForm(10 << 20) // 10 MB
+	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
 		http.Error(w, "Error parsing the multipart form", http.StatusInternalServerError)
 		return
 	}
 
-	// Retrieve the file from form data
 	file, _, err := r.FormFile("excelFile")
 	if err != nil {
 		http.Error(w, "Error retrieving the file from form data", http.StatusBadRequest)
@@ -233,7 +223,6 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Create or open the existing file
 	out, err := os.OpenFile("ScheduleExcel.xlsx", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		http.Error(w, "Error opening the file", http.StatusInternalServerError)
@@ -241,7 +230,6 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer out.Close()
 
-	// Copy the uploaded file to the existing file
 	_, err = io.Copy(out, file)
 	if err != nil {
 		http.Error(w, "Error writing to the file", http.StatusInternalServerError)
@@ -254,9 +242,68 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 }
 
+
+func getUsersFromJSON(filename string) ([]User, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	bytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	var users []User
+	if err := json.Unmarshal(bytes, &users); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
+
+func updateUserRole(name string, role string) {
+  users, err := getUsersFromJSON("users.json")
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	for i, user := range users {
+		if user.Name == name {
+			users[i].Role = role
+		}
+	}
+	file, _ := os.Create("users.json")
+	defer file.Close()
+	json.NewEncoder(file).Encode(users)
+}
+
+func users(w http.ResponseWriter, r *http.Request) {
+  t, err := template.ParseFiles("templates/user_page.html")
+  if err != nil {
+    fmt.Fprintf(w, err.Error())
+  }
+
+  if r.Method == http.MethodGet {
+    users, err := getUsersFromJSON("users.json")
+  	if err != nil {
+  		fmt.Println("Error:", err)
+  		return
+  	}
+		t.Execute(w, users)
+	} else if r.Method == http.MethodPost {
+		r.ParseForm()
+		name := r.Form.Get("name")
+		role := r.Form.Get("role")
+		updateUserRole(name, role)
+		http.Redirect(w, r, "/users", http.StatusSeeOther)
+	}
+}
+
 func handleFunc() {
   http.HandleFunc("/", index)
-  http.HandleFunc("/users", users)
+  http.HandleFunc("/user", users)
   http.HandleFunc("/schedule", schedule)
   http.HandleFunc("/upload", uploadFile)
   http.ListenAndServe(":8080", nil)
